@@ -1,0 +1,44 @@
+[Unit]
+Description=Advanced key-value store
+After=network.target
+Documentation=https://docs.keydb.dev, man:keydb-server(1)
+
+[Service]
+Type=notify
+ExecStart=/usr/bin/keydb-server /etc/keydb/keydb.conf --supervised systemd
+ExecStop=/bin/kill -s TERM $MAINPID
+PIDFile=/run/redis/redis.pid
+TimeoutStopSec=0
+Restart=always
+User=keydb
+Group=keydb
+RuntimeDirectory=redis
+RuntimeDirectoryMode=2755
+
+UMask=007
+PrivateTmp=yes
+LimitNOFILE=65535
+PrivateDevices=yes
+ProtectHome=yes
+ReadOnlyDirectories=/
+ReadWriteDirectories=-/var/lib/keydb
+ReadWriteDirectories=-/var/log/keydb
+ReadWriteDirectories=-/var/run/keydb
+
+NoNewPrivileges=true
+CapabilityBoundingSet=CAP_SETGID CAP_SETUID CAP_SYS_RESOURCE
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+# keydb-server can write to its own config file when in cluster mode so we
+# permit writing there by default. If you are not using this feature, it is
+# recommended that you replace the following lines with "ProtectSystem=full".
+ProtectSystem=true
+ReadWriteDirectories=-/etc/keydb
+
+RuntimeDirectory=redis
+RuntimeDirectoryMode=0755
+
+
+[Install]
+WantedBy=multi-user.target
+Alias=keydb.service

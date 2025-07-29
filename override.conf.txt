@@ -1,0 +1,7 @@
+[Service]
+PIDFile=/run/redis/redis.pid
+ExecStartPre=/bin/mkdir -p /run/redis
+ExecStartPre=/bin/chown keydb:keydb /run/redis
+ExecStart=
+ExecStart=/usr/bin/keydb-server /etc/keydb/keydb.conf --supervised systemd
+Restart=always
