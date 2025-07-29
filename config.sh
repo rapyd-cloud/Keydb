@@ -22,11 +22,31 @@ for cmd in "${REQUIRED_CMDS[@]}"; do
   if ! command_exists "$cmd"; then die "Required command '$cmd' not found."; fi
 done
 
-# Check if existing files are present
+# Check if keydb.conf exists
 [[ -f "${KEYDB_CONF_DIR}/keydb.conf" ]] || die "Missing keydb.conf in ${KEYDB_CONF_DIR}"
-[[ -f "${REDIS_SERVICE_FILE}" ]] || die "Missing redis.service in ${SYSTEMD_SYS_DIR}"
 
-# Create directories and assign ownership
+# Create redis.service if missing
+if [[ ! -f "${REDIS_SERVICE_FILE}" ]]; then
+  echo "Creating redis.service file..."
+  cat <<EOF > "${REDIS_SERVICE_FILE}"
+[Unit]
+Description=KeyDB (Redis-compatible mode)
+After=network.target
+
+[Service]
+User=keydb
+Group=keydb
+ExecStart=/usr/bin/keydb-server /etc/keydb/keydb.conf --server-threads 2
+ExecStop=/bin/kill -s TERM \$MAINPID
+Restart=always
+LimitNOFILE=10032
+
+[Install]
+WantedBy=multi-user.target
+EOF
+fi
+
+# Create necessary directories
 mkdir -p /var/run/redis /var/lib/keydb /var/log/keydb
 chown -R "${USER_NAME}:${USER_NAME}" /var/run/redis /var/lib/keydb /var/log/keydb
 chmod 755 /var/run/redis /var/lib/keydb /var/log/keydb
@@ -44,8 +64,9 @@ if getent group "${GROUP_NAME}" &>/dev/null; then
 fi
 
 # Reload and enable systemd service
+systemctl daemon-reexec
 systemctl daemon-reload
 systemctl enable redis
 
-echo "✅ KeyDB configuration completed without overwriting keydb.conf or redis.service."
+echo "✅ KeyDB configuration completed successfully."
 exit 0
