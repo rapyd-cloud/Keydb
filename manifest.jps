@@ -1,6 +1,6 @@
 version: 2.0.0
 type: update
-id: rapyd2-keydb-final
+id: rapyd-keydb
 name: Rapyd KeyDb
 description:
   short: Installs and configures KeyDb for socket-based operation.
@@ -9,15 +9,12 @@ categories:
   - apps/dev-and-admin-tools
 
 # --- Logo ---
-# Make sure your logo file is named 'icon.png'
-# or change this line to match your file's name.
 logo: icon.png
 
 targetNodes:
   nodeType:
     - llsmp
 
-# --- Lifecycle Hooks ---
 onInstall:
   - installAndConfigure
 onUninstall:
@@ -26,7 +23,6 @@ onAfterRedeployContainer:
   - installAndConfigure
 
 # --- Cloning ---
-# Added action to redeploy the addon after cloning.
 onAfterClone:
   redeployAfterClone:
     envName: ${event.response.env.envName}
