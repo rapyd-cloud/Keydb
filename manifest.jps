@@ -1,6 +1,6 @@
 version: 2.0.0
 type: update
-id: rapyd2-keydb
+id: rapyd-keydb
 name: Rapyd KeyDb
 description:
   short: Installs and configures KeyDb
