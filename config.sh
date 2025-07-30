@@ -21,36 +21,28 @@ readonly RUN_DIR="/run/redis"
 
 # --- Pre-flight Checks ---
 if [[ "$EUID" -ne 0 ]]; then die "This script must be run as root."; fi
-REQUIRED_CMDS=("systemctl" "chown" "chmod" "mkdir" "rm" "getent" "usermod" "sed" "curl")
-for cmd in "${REQUIRED_CMDS[@]}"; do
+for cmd in systemctl chown chmod mkdir rm getent usermod sed; do
   if ! command_exists "$cmd"; then die "Required command '$cmd' not found."; fi
 done
 
-# --- Clean up conflicting services ---
-echo "Disabling and removing conflicting keydb.service..."
-systemctl stop keydb.service &>/dev/null || true
-systemctl disable keydb.service &>/dev/null || true
-if [ -f "${DEFAULT_KEYDB_SERVICE_FILE}" ]; then
-    rm -f "${DEFAULT_KEYDB_SERVICE_FILE}"
-fi
-systemctl daemon-reload
-
 # --- Use the full keydb.conf as a base ---
-echo "Copying and configuring the main keydb.conf..."
-# The manifest downloads scripts to /root, so we use an absolute path to the config source
-# Assuming keydb.conf.txt is placed in /root alongside the script.
+echo "Copying and configuring the main keydb.conf from /root/keydb.conf.txt..."
+if [ ! -f /root/keydb.conf.txt ]; then
+    die "Configuration file /root/keydb.conf.txt not found. It should have been downloaded by the manifest."
+fi
 cp "/root/keydb.conf.txt" "${KEYDB_CONF_FILE}"
 
 # --- Apply necessary configurations ---
 sed -i 's/^daemonize yes/daemonize no/' "${KEYDB_CONF_FILE}"
 sed -i 's/^supervised no/supervised systemd/' "${KEYDB_CONF_FILE}"
 sed -i 's/^#port 6379/port 0/' "${KEYDB_CONF_FILE}"
-sed -i "s|^pidfile /run/redis/redis.pid|pidfile ${RUN_DIR}/redis.pid|" "${KEYDB_CONF_FILE}"
-sed -i "s|^unixsocket /var/run/redis/redis.sock|unixsocket ${RUN_DIR}/redis.sock|" "${KEYDB_CONF_FILE}"
+sed -i "s|^pidfile .*|pidfile ${RUN_DIR}/redis.pid|" "${KEYDB_CONF_FILE}"
+sed -i "s|^unixsocket .*|unixsocket ${RUN_DIR}/redis.sock|" "${KEYDB_CONF_FILE}"
 sed -i 's/^unixsocketperm 777/unixsocketperm 770/' "${KEYDB_CONF_FILE}"
-sed -i 's|^logfile /var/log/keydb/keydb-server.log|logfile /var/log/keydb/keydb.log|' "${KEYDB_CONF_FILE}"
-sed -i 's|^dir /var/lib/keydb|dir /var/lib/keydb|' "${KEYDB_CONF_FILE}"
-echo "include ${MAXMEMORY_CONF_FILE}" >> "${KEYDB_CONF_FILE}"
+sed -i 's|^logfile .*|logfile /var/log/keydb/keydb.log|' "${KEYDB_CONF_FILE}"
+sed -i 's|^dir .*|dir /var/lib/keydb|' "${KEYDB_CONF_FILE}"
+# Add the include directive if it's not already there
+grep -qF "include ${MAXMEMORY_CONF_FILE}" "${KEYDB_CONF_FILE}" || echo "include ${MAXMEMORY_CONF_FILE}" >> "${KEYDB_CONF_FILE}"
 
 chown "${USER_NAME}:${USER_NAME}" "${KEYDB_CONF_FILE}"
 chmod 644 "${KEYDB_CONF_FILE}"
@@ -62,7 +54,7 @@ chown "${USER_NAME}:${USER_NAME}" "${MAXMEMORY_CONF_FILE}"
 chmod 644 "${MAXMEMORY_CONF_FILE}"
 
 # --- Create Secure systemd Service File (as redis.service) ---
-echo "Creating secure redis.service file..."
+echo "Creating secure redis.service file at ${REDIS_SERVICE_FILE}..."
 cat <<EOF > "${REDIS_SERVICE_FILE}"
 [Unit]
 Description=KeyDB (Redis-compatible mode)
@@ -104,6 +96,7 @@ if getent group "${GROUP_NAME}" &>/dev/null; then
 fi
 
 # --- Reload and Enable Service ---
+echo "Reloading systemd and enabling the service..."
 systemctl daemon-reload
 systemctl enable --now redis.service
 
