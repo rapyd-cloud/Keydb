@@ -15,6 +15,7 @@ readonly KEYDB_SESSION_CONF_FILE="${PHP_CONF_DIR}/90-keydb-session.ini"
 readonly SESSION_DB=0
 readonly USER_NAME="keydb"
 readonly GROUP_NAME="litespeed"
+readonly RUN_DIR="/run/redis" # Use modern /run path
 
 # --- Pre-flight Checks ---
 if [[ "$EUID" -ne 0 ]]; then die "This script must be run as root."; fi
@@ -23,22 +24,21 @@ for cmd in "${REQUIRED_CMDS[@]}"; do
   if ! command_exists "$cmd"; then die "Required command '$cmd' not found."; fi
 done
 
-# --- Create Minimal keydb.conf ---
+# --- Create Minimal keydb.conf with correct paths ---
 echo "Creating a minimal keydb.conf file..."
 cat <<EOF > "${KEYDB_CONF_FILE}"
 # Minimal KeyDB Config for Socket-only Operation
 daemonize no
 supervised systemd
-pidfile /var/run/redis/redis.pid
+pidfile ${RUN_DIR}/redis.pid
 logfile /var/log/keydb/keydb.log
-loglevel notice
 dir /var/lib/keydb
 
 # Disable TCP/IP listening completely
 port 0
 
-# Enable Unix Socket
-unixsocket /var/run/redis/redis.sock
+# Enable Unix Socket with the correct path
+unixsocket ${RUN_DIR}/redis.sock
 unixsocketperm 777
 
 # Include dynamic memory configuration
@@ -63,7 +63,7 @@ ExecStart=/usr/bin/keydb-server /etc/keydb/keydb.conf --supervised systemd --ser
 ExecStop=/bin/kill -s TERM \$MAINPID
 Restart=always
 LimitNOFILE=65535
-PIDFile=/var/run/redis/redis.pid
+PIDFile=${RUN_DIR}/redis.pid
 RuntimeDirectory=redis
 RuntimeDirectoryMode=0755
 
@@ -73,15 +73,15 @@ Alias=keydb.service
 EOF
 
 # --- Create Directories ---
-mkdir -p /var/run/redis /var/lib/keydb /var/log/keydb
-chown -R "${USER_NAME}:${USER_NAME}" /var/run/redis /var/lib/keydb /var/log/keydb
-chmod 755 /var/run/redis /var/lib/keydb /var/log/keydb
+mkdir -p "${RUN_DIR}" /var/lib/keydb /var/log/keydb
+chown -R "${USER_NAME}:${USER_NAME}" "${RUN_DIR}" /var/lib/keydb /var/log/keydb
+chmod 755 "${RUN_DIR}" /var/lib/keydb /var/log/keydb
 
 # --- Configure PHP Sessions ---
 mkdir -p "${PHP_CONF_DIR}"
 cat << EOF > "${KEYDB_SESSION_CONF_FILE}"
 session.save_handler = redis
-session.save_path = "unix:///var/run/redis/redis.sock?database=${SESSION_DB}"
+session.save_path = "unix://${RUN_DIR}/redis.sock?database=${SESSION_DB}"
 EOF
 
 # --- Add keydb user to litespeed group ---
@@ -90,9 +90,9 @@ if getent group "${GROUP_NAME}" &>/dev/null; then
 fi
 
 # --- Reload and Enable Service ---
-systemctl daemon-reexec
 systemctl daemon-reload
-systemctl enable redis
+systemctl enable --now redis
+systemctl restart redis
 
 echo "KeyDB configuration completed successfully."
 exit 0
