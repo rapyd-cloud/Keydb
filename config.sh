@@ -11,6 +11,7 @@ readonly KEYDB_CONF_FILE="${KEYDB_CONF_DIR}/keydb.conf"
 readonly MAXMEMORY_CONF_FILE="${KEYDB_CONF_DIR}/maxmemory.conf"
 readonly SYSTEMD_SYS_DIR="/usr/lib/systemd/system"
 readonly REDIS_SERVICE_FILE="${SYSTEMD_SYS_DIR}/redis.service"
+readonly DEFAULT_KEYDB_SERVICE_FILE="${SYSTEMD_SYS_DIR}/keydb.service"
 readonly PHP_CONF_DIR="/usr/local/lsws/lsphp/etc/php.d"
 readonly KEYDB_SESSION_CONF_FILE="${PHP_CONF_DIR}/90-keydb-session.ini"
 readonly SESSION_DB=0
@@ -25,65 +26,60 @@ for cmd in "${REQUIRED_CMDS[@]}"; do
   if ! command_exists "$cmd"; then die "Required command '$cmd' not found."; fi
 done
 
+# --- Clean up conflicting services ---
+echo "Disabling and removing conflicting keydb.service..."
+systemctl stop keydb.service &>/dev/null || true
+systemctl disable keydb.service &>/dev/null || true
+if [ -f "${DEFAULT_KEYDB_SERVICE_FILE}" ]; then
+    rm -f "${DEFAULT_KEYDB_SERVICE_FILE}"
+fi
+systemctl daemon-reload
+
 # --- Use the full keydb.conf as a base ---
 echo "Copying and configuring the main keydb.conf..."
-# Assuming keydb.conf.txt is in the same directory as the script during execution
-# If not, this path needs to be adjusted.
-SCRIPT_DIR=$(dirname "$0")
-cp "${SCRIPT_DIR}/keydb.conf.txt" "${KEYDB_CONF_FILE}"
+# The manifest downloads scripts to /root, so we use an absolute path to the config source
+# Assuming keydb.conf.txt is placed in /root alongside the script.
+cp "/root/keydb.conf.txt" "${KEYDB_CONF_FILE}"
 
 # --- Apply necessary configurations ---
+sed -i 's/^daemonize yes/daemonize no/' "${KEYDB_CONF_FILE}"
 sed -i 's/^supervised no/supervised systemd/' "${KEYDB_CONF_FILE}"
 sed -i 's/^#port 6379/port 0/' "${KEYDB_CONF_FILE}"
+sed -i "s|^pidfile /run/redis/redis.pid|pidfile ${RUN_DIR}/redis.pid|" "${KEYDB_CONF_FILE}"
+sed -i "s|^unixsocket /var/run/redis/redis.sock|unixsocket ${RUN_DIR}/redis.sock|" "${KEYDB_CONF_FILE}"
 sed -i 's/^unixsocketperm 777/unixsocketperm 770/' "${KEYDB_CONF_FILE}"
 sed -i 's|^logfile /var/log/keydb/keydb-server.log|logfile /var/log/keydb/keydb.log|' "${KEYDB_CONF_FILE}"
+sed -i 's|^dir /var/lib/keydb|dir /var/lib/keydb|' "${KEYDB_CONF_FILE}"
 echo "include ${MAXMEMORY_CONF_FILE}" >> "${KEYDB_CONF_FILE}"
 
 chown "${USER_NAME}:${USER_NAME}" "${KEYDB_CONF_FILE}"
 chmod 644 "${KEYDB_CONF_FILE}"
 
-# --- Create a default maxmemory.conf file BEFORE service start ---
+# --- Create a default maxmemory.conf file ---
 echo "Creating default maxmemory.conf..."
 echo "maxmemory 512mb" > "${MAXMEMORY_CONF_FILE}"
 chown "${USER_NAME}:${USER_NAME}" "${MAXMEMORY_CONF_FILE}"
 chmod 644 "${MAXMEMORY_CONF_FILE}"
 
-# --- Create Secure systemd Service File ---
+# --- Create Secure systemd Service File (as redis.service) ---
 echo "Creating secure redis.service file..."
 cat <<EOF > "${REDIS_SERVICE_FILE}"
 [Unit]
-Description=Advanced key-value store
+Description=KeyDB (Redis-compatible mode)
 After=network.target
-Documentation=https://docs.keydb.dev, man:keydb-server(1)
+Documentation=https://docs.keydb.dev
 
 [Service]
 Type=notify
 User=keydb
 Group=keydb
-ExecStart=/usr/bin/keydb-server /etc/keydb/keydb.conf --supervised systemd --server-threads 2
+ExecStart=/usr/bin/keydb-server ${KEYDB_CONF_FILE} --supervised systemd --server-threads 2
 ExecStop=/bin/kill -s TERM \$MAINPID
-PIDFile=/run/redis/redis.pid
-TimeoutStopSec=0
+PIDFile=${RUN_DIR}/redis.pid
 Restart=always
+LimitNOFILE=65535
 RuntimeDirectory=redis
 RuntimeDirectoryMode=0755
-
-UMask=007
-PrivateTmp=yes
-LimitNOFILE=65535
-PrivateDevices=yes
-ProtectHome=yes
-ReadOnlyDirectories=/
-ReadWriteDirectories=-/var/lib/keydb
-ReadWriteDirectories=-/var/log/keydb
-ReadWriteDirectories=-/var/run/keydb
-
-NoNewPrivileges=true
-CapabilityBoundingSet=CAP_SETGID CAP_SETUID CAP_SYS_RESOURCE
-RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
-
-ProtectSystem=true
-ReadWriteDirectories=-/etc/keydb
 
 [Install]
 WantedBy=multi-user.target
@@ -109,8 +105,7 @@ fi
 
 # --- Reload and Enable Service ---
 systemctl daemon-reload
-systemctl enable --now redis
-systemctl restart redis
+systemctl enable --now redis.service
 
 echo "KeyDB configuration completed successfully."
 exit 0
