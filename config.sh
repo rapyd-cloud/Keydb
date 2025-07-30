@@ -16,29 +16,29 @@ readonly KEYDB_SESSION_CONF_FILE="${PHP_CONF_DIR}/90-keydb-session.ini"
 readonly SESSION_DB=0
 readonly USER_NAME="keydb"
 readonly GROUP_NAME="litespeed"
-readonly RUN_DIR="/run/redis" # Use modern /run path
+readonly RUN_DIR="/run/redis"
 
 # --- Pre-flight Checks ---
 if [[ "$EUID" -ne 0 ]]; then die "This script must be run as root."; fi
-REQUIRED_CMDS=("systemctl" "chown" "chmod" "mkdir" "rm" "getent" "usermod")
+REQUIRED_CMDS=("systemctl" "chown" "chmod" "mkdir" "rm" "getent" "usermod" "sed" "curl")
 for cmd in "${REQUIRED_CMDS[@]}"; do
   if ! command_exists "$cmd"; then die "Required command '$cmd' not found."; fi
 done
 
-# --- Create Minimal keydb.conf ---
-echo "Creating a minimal keydb.conf file..."
-cat <<EOF > "${KEYDB_CONF_FILE}"
-# Minimal KeyDB Config for Socket-only Operation
-daemonize no
-supervised systemd
-pidfile ${RUN_DIR}/redis.pid
-logfile /var/log/keydb/keydb.log
-dir /var/lib/keydb
-port 0
-unixsocket ${RUN_DIR}/redis.sock
-unixsocketperm 777
-include ${MAXMEMORY_CONF_FILE}
-EOF
+# --- Use the full keydb.conf as a base ---
+echo "Copying and configuring the main keydb.conf..."
+# Assuming keydb.conf.txt is in the same directory as the script during execution
+# If not, this path needs to be adjusted.
+SCRIPT_DIR=$(dirname "$0")
+cp "${SCRIPT_DIR}/keydb.conf.txt" "${KEYDB_CONF_FILE}"
+
+# --- Apply necessary configurations ---
+sed -i 's/^supervised no/supervised systemd/' "${KEYDB_CONF_FILE}"
+sed -i 's/^#port 6379/port 0/' "${KEYDB_CONF_FILE}"
+sed -i 's/^unixsocketperm 777/unixsocketperm 770/' "${KEYDB_CONF_FILE}"
+sed -i 's|^logfile /var/log/keydb/keydb-server.log|logfile /var/log/keydb/keydb.log|' "${KEYDB_CONF_FILE}"
+echo "include ${MAXMEMORY_CONF_FILE}" >> "${KEYDB_CONF_FILE}"
+
 chown "${USER_NAME}:${USER_NAME}" "${KEYDB_CONF_FILE}"
 chmod 644 "${KEYDB_CONF_FILE}"
 
@@ -48,13 +48,13 @@ echo "maxmemory 512mb" > "${MAXMEMORY_CONF_FILE}"
 chown "${USER_NAME}:${USER_NAME}" "${MAXMEMORY_CONF_FILE}"
 chmod 644 "${MAXMEMORY_CONF_FILE}"
 
-# --- Create systemd Service File ---
-echo "Creating redis.service file..."
+# --- Create Secure systemd Service File ---
+echo "Creating secure redis.service file..."
 cat <<EOF > "${REDIS_SERVICE_FILE}"
 [Unit]
-Description=KeyDB (Redis-compatible mode)
+Description=Advanced key-value store
 After=network.target
-Documentation=https://docs.keydb.dev
+Documentation=https://docs.keydb.dev, man:keydb-server(1)
 
 [Service]
 Type=notify
@@ -62,11 +62,28 @@ User=keydb
 Group=keydb
 ExecStart=/usr/bin/keydb-server /etc/keydb/keydb.conf --supervised systemd --server-threads 2
 ExecStop=/bin/kill -s TERM \$MAINPID
+PIDFile=/run/redis/redis.pid
+TimeoutStopSec=0
 Restart=always
-LimitNOFILE=65535
-PIDFile=${RUN_DIR}/redis.pid
 RuntimeDirectory=redis
 RuntimeDirectoryMode=0755
+
+UMask=007
+PrivateTmp=yes
+LimitNOFILE=65535
+PrivateDevices=yes
+ProtectHome=yes
+ReadOnlyDirectories=/
+ReadWriteDirectories=-/var/lib/keydb
+ReadWriteDirectories=-/var/log/keydb
+ReadWriteDirectories=-/var/run/keydb
+
+NoNewPrivileges=true
+CapabilityBoundingSet=CAP_SETGID CAP_SETUID CAP_SYS_RESOURCE
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+ProtectSystem=true
+ReadWriteDirectories=-/etc/keydb
 
 [Install]
 WantedBy=multi-user.target
