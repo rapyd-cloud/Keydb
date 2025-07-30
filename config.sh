@@ -25,26 +25,30 @@ done
 # Check if keydb.conf exists
 [[ -f "${KEYDB_CONF_DIR}/keydb.conf" ]] || die "Missing keydb.conf in ${KEYDB_CONF_DIR}"
 
-# Create redis.service if missing
-if [[ ! -f "${REDIS_SERVICE_FILE}" ]]; then
-  echo "Creating redis.service file..."
-  cat <<EOF > "${REDIS_SERVICE_FILE}"
+# Create or overwrite the redis.service file with a robust configuration
+echo "Creating redis.service file..."
+cat <<EOF > "${REDIS_SERVICE_FILE}"
 [Unit]
 Description=KeyDB (Redis-compatible mode)
 After=network.target
+Documentation=https://docs.keydb.dev
 
 [Service]
+Type=notify
 User=keydb
 Group=keydb
-ExecStart=/usr/bin/keydb-server /etc/keydb/keydb.conf --server-threads 2
+ExecStart=/usr/bin/keydb-server /etc/keydb/keydb.conf --supervised systemd --server-threads 2
 ExecStop=/bin/kill -s TERM \$MAINPID
 Restart=always
-LimitNOFILE=10032
+LimitNOFILE=65535
+PIDFile=/run/redis/redis.pid
+RuntimeDirectory=redis
+RuntimeDirectoryMode=0755
 
 [Install]
 WantedBy=multi-user.target
+Alias=keydb.service
 EOF
-fi
 
 # Create necessary directories
 mkdir -p /var/run/redis /var/lib/keydb /var/log/keydb
@@ -68,5 +72,5 @@ systemctl daemon-reexec
 systemctl daemon-reload
 systemctl enable redis
 
-echo "✅ KeyDB configuration completed successfully."
+echo " KeyDB configuration completed successfully."
 exit 0
