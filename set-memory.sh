@@ -5,7 +5,7 @@ set -euo pipefail
 readonly DYNAMIC_MEM_CONF_FILE="/etc/keydb/maxmemory.conf"
 readonly DEFAULT_PERCENTAGE=10
 readonly FALLBACK_MEM_MB=512
-CACHE_MEM_LIMIT_MB=${FALLBACK_MEM_MB} # Start with the fallback value
+CACHE_MEM_LIMIT_MB=${FALLBACK_MEM_MB}
 
 echo "--- KeyDB Memory Configuration ---"
 
@@ -21,10 +21,8 @@ else
     echo "CACHE_MEM_LIMIT not found. Using fallback: ${FALLBACK_MEM_MB}MB"
 fi
 
-# Calculate memory in bytes based on the determined limit
 MAX_MEMORY_BYTES=$((CACHE_MEM_LIMIT_MB * 1024 * 1024 * DEFAULT_PERCENTAGE / 100))
 
-# Write the configuration
 echo "Setting maxmemory to ${DEFAULT_PERCENTAGE}% of ${CACHE_MEM_LIMIT_MB}MB -> ${MAX_MEMORY_BYTES} bytes."
 echo "maxmemory ${MAX_MEMORY_BYTES}" > "${DYNAMIC_MEM_CONF_FILE}"
 chown keydb:keydb "${DYNAMIC_MEM_CONF_FILE}"
