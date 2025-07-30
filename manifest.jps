@@ -1,92 +1,170 @@
 version: 2.0.0
 type: update
-id: rapyd-keydb
+id: rapyd2-keydb
 name: Rapyd KeyDb
 description:
-  short: Installs and configures KeyDb for socket-based operation.
+  short: Installs and configures KeyDb
+
 
 categories:
   - apps/dev-and-admin-tools
 
-# --- Logo ---
+
 logo: icon.png
 
 targetNodes:
+
   nodeType:
+
     - llsmp
 
-onInstall:
-  - installAndConfigure
-onUninstall:
-  - removeKeyDB
-onAfterRedeployContainer:
-  - installAndConfigure
 
-# --- Cloning ---
+onInstall:
+
+  - action: deployKeyDB
+
+
+onUninstall:
+
+  - action: removeKeyDB
+
+
+onAfterRedeployContainer:
+
+  - action: deployKeyDB
+
+
 onAfterClone:
+
   redeployAfterClone:
+
     envName: ${event.response.env.envName}
+
     nodeGroup: cp
 
+
 actions:
-  installAndConfigure:
-    - cmd[${targetNodes.nodeGroup}]:
-        # Stop and remove previous versions for a clean installation
+
+  removeRedis:
+
+    - cmd[${targetNodes.nodeGroup}]: |-
+
         systemctl stop redis &>/dev/null || true
-        if dnf list installed redis &>/dev/null; then dnf remove -y redis; fi
-        killall -9 redis-server &>/dev/null || true
-        killall -9 keydb-server &>/dev/null || true
-      user: root
-    - cmd[${targetNodes.nodeGroup}]:
-        # Install KeyDB from the official RPM
-        rpm --import https://download.keydb.dev/pkg/open_source/rpm/RPM-GPG-KEY-keydb
-        curl -fsSL --retry 3 -o /tmp/keydb-latest.rpm https://download.keydb.dev/pkg/open_source/rpm/centos8/x86_64/keydb-latest-1.el8.x86_64.rpm
-        dnf install -y /tmp/keydb-latest.rpm
-        rm -f /tmp/keydb-latest.rpm
-      user: root
-    - upload:
-        - source: keydb.conf
-          target: /etc/keydb/
-        - source: redis.service
-          target: /usr/lib/systemd/system/
-    - cmd[${targetNodes.nodeGroup}]:
-        # Create directories and set permissions
-        mkdir -p /run/redis /var/lib/keydb /var/log/keydb
-        chown -R keydb:keydb /etc/keydb /run/redis /var/lib/keydb /var/log/keydb
-        chmod 755 /run/redis /var/lib/keydb /var/log/keydb
 
-        mkdir -p /usr/local/lsws/lsphp/etc/php.d
-        echo 'session.save_handler = redis' > /usr/local/lsws/lsphp/etc/php.d/90-keydb-session.ini
-        echo 'session.save_path = "unix:///run/redis/redis.sock?database=0"' >> /usr/local/lsws/lsphp/etc/php.d/90-keydb-session.ini
+        systemctl disable redis &>/dev/null || true
 
-        if getent group litespeed &>/dev/null; then usermod -a -G litespeed keydb; fi
+        if dnf list installed redis &>/dev/null; then
 
-        curl -fsSL --retry 3 -o /tmp/set-memory.sh https://raw.githubusercontent.com/rapyd-cloud/Keydb/production/set-memory.sh
-        chmod +x /tmp/set-memory.sh
-        /tmp/set-memory.sh
-        rm -f /tmp/set-memory.sh
+          dnf remove -y redis
 
-        systemctl daemon-reload
-        systemctl enable --now redis
-        systemctl restart redis
-
-        if systemctl list-units --type=service | grep -q 'lsws.service'; then systemctl restart lsws; fi
-
-        if [ -f /home/jelastic/bin/wp ]; then
-          cd /var/www/webroot/ROOT
-          /home/jelastic/bin/wp cache flush
         fi
+
+        killall -9 redis-server &>/dev/null || true
+
+        killall -9 keydb-server &>/dev/null || true
+
       user: root
+
+
+  installKeyDB:
+
+    - cmd[${targetNodes.nodeGroup}]: |-
+
+        rpm --import https://download.keydb.dev/pkg/open_source/rpm/RPM-GPG-KEY-keydb
+
+        curl -fsSL --retry 3 --retry-delay 5 -o /tmp/keydb-latest.rpm https://download.keydb.dev/pkg/open_source/rpm/centos8/x86_64/keydb-latest-1.el8.x86_64.rpm
+
+        dnf install -y /tmp/keydb-latest.rpm
+
+        rm -f /tmp/keydb-latest.rpm
+
+      user: root
+
+
+  runConfigScripts:
+
+    - cmd[${targetNodes.nodeGroup}]: |-
+
+        curl -fsSL --retry 3 --retry-delay 5 -o /root/config.sh https://raw.githubusercontent.com/rapyd-cloud/Keydb/production/config.sh
+
+        curl -fsSL --retry 3 --retry-delay 5 -o /root/set-memory.sh https://raw.githubusercontent.com/rapyd-cloud/Keydb/production/set-memory.sh
+
+        chmod +x /root/config.sh /root/set-memory.sh
+
+      user: root
+
+    - cmd[${targetNodes.nodeGroup}]: |-
+
+        /root/config.sh
+
+        /root/set-memory.sh
+
+        rm -f /root/config.sh /root/set-memory.sh
+
+      user: root
+
 
   removeKeyDB:
-    - cmd[${targetNodes.nodeGroup}]:
+
+    - cmd[${targetNodes.nodeGroup}]: |-
+
         systemctl stop redis &>/dev/null || true
+
         systemctl disable redis &>/dev/null || true
-        if dnf list installed keydb &>/dev/null; then dnf remove -y keydb; fi
+
+        if dnf list installed keydb &>/dev/null; then
+
+          dnf remove -y keydb
+
+        fi
+
         rm -f /usr/lib/systemd/system/redis.service
-        rm -f /usr/local/lsws/lsphp/etc/php.d/90-keydb-session.ini
+
+        rm -f /usr/local/bin/set-keydb-memory.sh
+
         rm -rf /etc/keydb /var/lib/keydb /var/log/keydb
+
         systemctl daemon-reload
+
       user: root
 
-success: "KeyDB has been successfully installed and configured."
+
+  clearCache:
+
+    - cmd[${targetNodes.nodeGroup}]: |-
+
+        if [ -f /home/jelastic/bin/wp ]; then
+
+          cd /var/www/webroot/ROOT
+
+          /home/jelastic/bin/wp cache flush
+
+        fi
+
+      user: litespeed
+
+
+  deployKeyDB:
+
+    - action: removeRedis
+
+    - action: installKeyDB
+
+    - action: runConfigScripts
+
+    - cmd[${targetNodes.nodeGroup}]: |-
+
+        systemctl restart redis
+
+        if systemctl list-units --type=service | grep -q 'lsws.service'; then
+
+          systemctl restart lsws
+
+        fi
+
+      user: root
+
+    - action: clearCache
+
+
+success: "KeyDB has been successfully installed and configured." 
