@@ -55,29 +55,23 @@ actions:
         chown -R keydb:keydb /etc/keydb /run/redis /var/lib/keydb /var/log/keydb
         chmod 755 /run/redis /var/lib/keydb /var/log/keydb
 
-        # Configure PHP sessions
         mkdir -p /usr/local/lsws/lsphp/etc/php.d
         echo 'session.save_handler = redis' > /usr/local/lsws/lsphp/etc/php.d/90-keydb-session.ini
         echo 'session.save_path = "unix:///run/redis/redis.sock?database=0"' >> /usr/local/lsws/lsphp/etc/php.d/90-keydb-session.ini
 
-        # Add keydb user to the litespeed group
         if getent group litespeed &>/dev/null; then usermod -a -G litespeed keydb; fi
 
-        # Download and run the dynamic memory script
         curl -fsSL --retry 3 -o /tmp/set-memory.sh https://raw.githubusercontent.com/rapyd-cloud/Keydb/production/set-memory.sh
         chmod +x /tmp/set-memory.sh
         /tmp/set-memory.sh
         rm -f /tmp/set-memory.sh
 
-        # Reload systemd and start the service
         systemctl daemon-reload
         systemctl enable --now redis
         systemctl restart redis
 
-        # Restart LiteSpeed if present
         if systemctl list-units --type=service | grep -q 'lsws.service'; then systemctl restart lsws; fi
 
-        # Flush WP cache if it exists
         if [ -f /home/jelastic/bin/wp ]; then
           cd /var/www/webroot/ROOT
           /home/jelastic/bin/wp cache flush
