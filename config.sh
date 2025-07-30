@@ -8,6 +8,7 @@ command_exists() { command -v "$1" >/dev/null 2>&1; }
 # --- Configuration paths ---
 readonly KEYDB_CONF_DIR="/etc/keydb"
 readonly KEYDB_CONF_FILE="${KEYDB_CONF_DIR}/keydb.conf"
+readonly MAXMEMORY_CONF_FILE="${KEYDB_CONF_DIR}/maxmemory.conf"
 readonly SYSTEMD_SYS_DIR="/usr/lib/systemd/system"
 readonly REDIS_SERVICE_FILE="${SYSTEMD_SYS_DIR}/redis.service"
 readonly PHP_CONF_DIR="/usr/local/lsws/lsphp/etc/php.d"
@@ -24,7 +25,7 @@ for cmd in "${REQUIRED_CMDS[@]}"; do
   if ! command_exists "$cmd"; then die "Required command '$cmd' not found."; fi
 done
 
-# --- Create Minimal keydb.conf with correct paths ---
+# --- Create Minimal keydb.conf ---
 echo "Creating a minimal keydb.conf file..."
 cat <<EOF > "${KEYDB_CONF_FILE}"
 # Minimal KeyDB Config for Socket-only Operation
@@ -33,19 +34,19 @@ supervised systemd
 pidfile ${RUN_DIR}/redis.pid
 logfile /var/log/keydb/keydb.log
 dir /var/lib/keydb
-
-# Disable TCP/IP listening completely
 port 0
-
-# Enable Unix Socket with the correct path
 unixsocket ${RUN_DIR}/redis.sock
 unixsocketperm 777
-
-# Include dynamic memory configuration
-include /etc/keydb/maxmemory.conf
+include ${MAXMEMORY_CONF_FILE}
 EOF
 chown "${USER_NAME}:${USER_NAME}" "${KEYDB_CONF_FILE}"
 chmod 644 "${KEYDB_CONF_FILE}"
+
+# --- Create a default maxmemory.conf file BEFORE service start ---
+echo "Creating default maxmemory.conf..."
+echo "maxmemory 512mb" > "${MAXMEMORY_CONF_FILE}"
+chown "${USER_NAME}:${USER_NAME}" "${MAXMEMORY_CONF_FILE}"
+chmod 644 "${MAXMEMORY_CONF_FILE}"
 
 # --- Create systemd Service File ---
 echo "Creating redis.service file..."
