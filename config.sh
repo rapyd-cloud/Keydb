@@ -5,8 +5,9 @@ set -euo pipefail
 die() { echo "ERROR: $1" >&2; exit 1; }
 command_exists() { command -v "$1" >/dev/null 2>&1; }
 
-# Configuration paths
+# --- Configuration paths ---
 readonly KEYDB_CONF_DIR="/etc/keydb"
+readonly KEYDB_CONF_FILE="${KEYDB_CONF_DIR}/keydb.conf"
 readonly SYSTEMD_SYS_DIR="/usr/lib/systemd/system"
 readonly REDIS_SERVICE_FILE="${SYSTEMD_SYS_DIR}/redis.service"
 readonly PHP_CONF_DIR="/usr/local/lsws/lsphp/etc/php.d"
@@ -15,17 +16,38 @@ readonly SESSION_DB=0
 readonly USER_NAME="keydb"
 readonly GROUP_NAME="litespeed"
 
-# Pre-flight Checks
+# --- Pre-flight Checks ---
 if [[ "$EUID" -ne 0 ]]; then die "This script must be run as root."; fi
 REQUIRED_CMDS=("systemctl" "chown" "chmod" "mkdir" "rm" "getent" "usermod")
 for cmd in "${REQUIRED_CMDS[@]}"; do
   if ! command_exists "$cmd"; then die "Required command '$cmd' not found."; fi
 done
 
-# Check if keydb.conf exists
-[[ -f "${KEYDB_CONF_DIR}/keydb.conf" ]] || die "Missing keydb.conf in ${KEYDB_CONF_DIR}"
+# --- Create Minimal keydb.conf ---
+echo "Creating a minimal keydb.conf file..."
+cat <<EOF > "${KEYDB_CONF_FILE}"
+# Minimal KeyDB Config for Socket-only Operation
+daemonize no
+supervised systemd
+pidfile /var/run/redis/redis.pid
+logfile /var/log/keydb/keydb.log
+loglevel notice
+dir /var/lib/keydb
 
-# Create or overwrite the redis.service file with a robust configuration
+# Disable TCP/IP listening completely
+port 0
+
+# Enable Unix Socket
+unixsocket /var/run/redis/redis.sock
+unixsocketperm 777
+
+# Include dynamic memory configuration
+include /etc/keydb/maxmemory.conf
+EOF
+chown "${USER_NAME}:${USER_NAME}" "${KEYDB_CONF_FILE}"
+chmod 644 "${KEYDB_CONF_FILE}"
+
+# --- Create systemd Service File ---
 echo "Creating redis.service file..."
 cat <<EOF > "${REDIS_SERVICE_FILE}"
 [Unit]
@@ -41,7 +63,7 @@ ExecStart=/usr/bin/keydb-server /etc/keydb/keydb.conf --supervised systemd --ser
 ExecStop=/bin/kill -s TERM \$MAINPID
 Restart=always
 LimitNOFILE=65535
-PIDFile=/run/redis/redis.pid
+PIDFile=/var/run/redis/redis.pid
 RuntimeDirectory=redis
 RuntimeDirectoryMode=0755
 
@@ -50,27 +72,27 @@ WantedBy=multi-user.target
 Alias=keydb.service
 EOF
 
-# Create necessary directories
+# --- Create Directories ---
 mkdir -p /var/run/redis /var/lib/keydb /var/log/keydb
 chown -R "${USER_NAME}:${USER_NAME}" /var/run/redis /var/lib/keydb /var/log/keydb
 chmod 755 /var/run/redis /var/lib/keydb /var/log/keydb
 
-# Configure PHP Sessions
+# --- Configure PHP Sessions ---
 mkdir -p "${PHP_CONF_DIR}"
 cat << EOF > "${KEYDB_SESSION_CONF_FILE}"
 session.save_handler = redis
 session.save_path = "unix:///var/run/redis/redis.sock?database=${SESSION_DB}"
 EOF
 
-# Add keydb user to litespeed group (if it exists)
+# --- Add keydb user to litespeed group ---
 if getent group "${GROUP_NAME}" &>/dev/null; then
   usermod -a -G "${GROUP_NAME}" "${USER_NAME}"
 fi
 
-# Reload and enable systemd service
+# --- Reload and Enable Service ---
 systemctl daemon-reexec
 systemctl daemon-reload
 systemctl enable redis
 
-echo " KeyDB configuration completed successfully."
+echo "KeyDB configuration completed successfully."
 exit 0
